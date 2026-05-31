@@ -257,6 +257,36 @@ def generate_llm_commentary(grouped: Dict[str, List[Item]]) -> Optional[str]:
         return None
 
 
+def translate_to_chinese(text: str) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    api_key = (os.getenv("OPENAI_API_KEY", "") or "").strip()
+    if not api_key or OpenAI is None:
+        return text
+    model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini").strip()
+    client = OpenAI(api_key=api_key)
+    try:
+        r = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": "请把用户提供的文本翻译成简体中文，保持原意，简洁自然，只输出译文。"},
+                {"role": "user", "content": text[:2000]},
+            ],
+            temperature=0,
+        )
+        out = (getattr(r, "output_text", "") or "").strip()
+        return out if out else text
+    except Exception:
+        return text
+
+
+def maybe_translate_item(i: Item) -> Item:
+    title_zh = translate_to_chinese(i.title)
+    summary_zh = translate_to_chinese(i.summary)
+    return Item(i.source, title_zh, i.link, summary_zh, i.published)
+
+
 def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> str:
     filtered = [i for items in all_items.values() for i in items if within_lookback(i, lookback_hours)]
     grouped: Dict[str, List[Item]] = {}
@@ -273,14 +303,12 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
         "<h3>二、分类情报</h3>",
     ]
 
-    parts.append("<h3>二点五、赛道热度趋势（近24h 对比 前6天）</h3><ul>")
+    parts.append("<h3>三、赛道热度（简版）</h3><ul>")
     for cat, items in grouped.items():
         snap = trend_snapshot(items)
         diff = snap["last_24h"] - snap["prev_6d"]
         trend = "升温" if diff > 0 else ("降温" if diff < 0 else "持平")
-        parts.append(
-            f"<li>{html.escape(cat)}: 近24h={snap['last_24h']}，前6天={snap['prev_6d']}，趋势={trend}</li>"
-        )
+        parts.append(f"<li>{html.escape(cat)}：{trend}（24h: {snap['last_24h']} / 前6天: {snap['prev_6d']}）</li>")
     parts.append("</ul>")
 
     cat_order = [
@@ -292,7 +320,7 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
         "技术与创业讨论",
     ]
 
-    category_limit = 5
+    category_limit = 3
     for cat in cat_order:
         items = grouped.get(cat, [])
         if not items:
@@ -300,6 +328,7 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
         ranked = sorted(items, key=investment_signal_score, reverse=True)[:category_limit]
         parts.append(f"<h4>{cat}（显示前{len(ranked)}条 / 共{len(items)}条）</h4><ul>")
         for i in ranked:
+            i = maybe_translate_item(i)
             src = html.escape(i.source)
             title = html.escape(i.title or "(无标题)")
             link = html.escape(i.link or "#")
@@ -312,7 +341,7 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
             )
         parts.append("</ul>")
 
-    parts.append("<h3>三、源站抓取状态</h3><ul>")
+    parts.append("<h3>四、源站抓取状态</h3><ul>")
     for source, items in all_items.items():
         parts.append(f"<li>{html.escape(source)}: {len(items)} 条</li>")
     parts.append("</ul>")
