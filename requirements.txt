@@ -4,3 +4,4 @@ requests==2.32.3
 python-dotenv==1.0.1
 APScheduler==3.10.4
 openai==1.51.2
+deep-translator==1.11.4

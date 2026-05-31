@@ -14,6 +14,7 @@ import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from deep_translator import GoogleTranslator
 
 try:
     from openai import OpenAI
@@ -262,21 +263,27 @@ def translate_to_chinese(text: str) -> str:
     if not text:
         return ""
     api_key = (os.getenv("OPENAI_API_KEY", "") or "").strip()
-    if not api_key or OpenAI is None:
-        return text
-    model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini").strip()
-    client = OpenAI(api_key=api_key)
+    if api_key and OpenAI is not None:
+        model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini").strip()
+        client = OpenAI(api_key=api_key)
+        try:
+            r = client.responses.create(
+                model=model,
+                input=[
+                    {"role": "system", "content": "请把用户提供的文本翻译成简体中文，保持原意，简洁自然，只输出译文。"},
+                    {"role": "user", "content": text[:2000]},
+                ],
+                temperature=0,
+            )
+            out = (getattr(r, "output_text", "") or "").strip()
+            if out:
+                return out
+        except Exception:
+            pass
+
+    # Fallback: no OpenAI key or OpenAI translation failed.
     try:
-        r = client.responses.create(
-            model=model,
-            input=[
-                {"role": "system", "content": "请把用户提供的文本翻译成简体中文，保持原意，简洁自然，只输出译文。"},
-                {"role": "user", "content": text[:2000]},
-            ],
-            temperature=0,
-        )
-        out = (getattr(r, "output_text", "") or "").strip()
-        return out if out else text
+        return GoogleTranslator(source="auto", target="zh-CN").translate(text[:3000]) or text
     except Exception:
         return text
 
@@ -320,7 +327,7 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
         "技术与创业讨论",
     ]
 
-    category_limit = 3
+    category_limit = 2
     for cat in cat_order:
         items = grouped.get(cat, [])
         if not items:
