@@ -2,6 +2,7 @@ import argparse
 import datetime as dt
 import html
 import os
+import re
 import smtplib
 from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
@@ -62,6 +63,37 @@ def fetch_rss(source: str, url: str) -> List[Item]:
     return items
 
 
+def clean_text(s: str) -> str:
+    s = re.sub(r"\s+", " ", s or "").strip()
+    return s
+
+
+def fetch_article_snippet(url: str, max_chars: int = 260) -> str:
+    if not url:
+        return ""
+    try:
+        resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        text = clean_text(soup.get_text(" ", strip=True))
+        if not text:
+            return ""
+        return text[:max_chars]
+    except Exception:
+        return ""
+
+
+def enrich_items_with_snippet(items: List[Item]) -> List[Item]:
+    enriched: List[Item] = []
+    for i in items:
+        snippet = fetch_article_snippet(i.link)
+        summary = snippet if snippet else i.summary
+        enriched.append(Item(i.source, i.title, i.link, summary, i.published))
+    return enriched
+
+
 def fetch_indie_hackers(max_items: int) -> List[Item]:
     url = "https://www.indiehackers.com/"
     try:
@@ -101,14 +133,15 @@ def collect_all_sources(max_items: int) -> Dict[str, List[Item]]:
 
     result: Dict[str, List[Item]] = {}
     for name, url in sources.items():
-        result[name] = fetch_rss(name, url)[:max_items]
+        base_items = fetch_rss(name, url)[:max_items]
+        result[name] = enrich_items_with_snippet(base_items)
 
-    result["Indie Hackers"] = fetch_indie_hackers(max_items)
+    result["Indie Hackers"] = enrich_items_with_snippet(fetch_indie_hackers(max_items))
 
     x_feeds = [x.strip() for x in (os.getenv("X_FEEDS", "") or "").split(",") if x.strip()]
     x_items: List[Item] = []
     for feed_url in x_feeds:
-        x_items.extend(fetch_rss("X AI Builder", feed_url)[:max_items])
+        x_items.extend(enrich_items_with_snippet(fetch_rss("X AI Builder", feed_url)[:max_items]))
     result["X AI Builder"] = x_items[:max_items]
 
     return result
@@ -259,16 +292,18 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
         "技术与创业讨论",
     ]
 
+    category_limit = 5
     for cat in cat_order:
         items = grouped.get(cat, [])
         if not items:
             continue
-        parts.append(f"<h4>{cat}（{len(items)}）</h4><ul>")
-        for i in items[:30]:
+        ranked = sorted(items, key=investment_signal_score, reverse=True)[:category_limit]
+        parts.append(f"<h4>{cat}（显示前{len(ranked)}条 / 共{len(items)}条）</h4><ul>")
+        for i in ranked:
             src = html.escape(i.source)
             title = html.escape(i.title or "(无标题)")
             link = html.escape(i.link or "#")
-            summary = html.escape((i.summary or "")[:180])
+            summary = html.escape((i.summary or "")[:260])
             score = investment_signal_score(i)
             level = signal_level(score)
             parts.append(
