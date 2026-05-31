@@ -1,5 +1,8 @@
 name: Daily AI Radar
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 on:
   schedule:
     # 09:00 Asia/Shanghai = 01:00 UTC
