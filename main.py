@@ -136,6 +136,47 @@ def categorize(item: Item) -> str:
     return "技术与创业讨论"
 
 
+def investment_signal_score(item: Item) -> int:
+    t = f"{item.title} {item.summary}".lower()
+    score = 0
+    high_intent = ["revenue", "mrr", "pricing", "paid", "enterprise", "contract", "customers"]
+    market_signal = ["funding", "valuation", "acquire", "launch", "growth", "retention"]
+    risk_words = ["shutdown", "layoff", "ban", "lawsuit", "security incident"]
+    for k in high_intent:
+        if k in t:
+            score += 2
+    for k in market_signal:
+        if k in t:
+            score += 1
+    for k in risk_words:
+        if k in t:
+            score -= 1
+    return max(0, min(score, 10))
+
+
+def signal_level(score: int) -> str:
+    if score >= 6:
+        return "高"
+    if score >= 3:
+        return "中"
+    return "低"
+
+
+def trend_snapshot(items: List[Item]) -> Dict[str, int]:
+    now = dt.datetime.now(dt.timezone.utc)
+    last_24h = 0
+    prev_6d = 0
+    for i in items:
+        if not i.published:
+            continue
+        delta = now - i.published
+        if delta <= dt.timedelta(hours=24):
+            last_24h += 1
+        elif delta <= dt.timedelta(days=7):
+            prev_6d += 1
+    return {"last_24h": last_24h, "prev_6d": prev_6d}
+
+
 def generate_rule_based_commentary(grouped: Dict[str, List[Item]]) -> str:
     total = sum(len(v) for v in grouped.values())
     hot = sorted(grouped.items(), key=lambda kv: len(kv[1]), reverse=True)
@@ -199,6 +240,16 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
         "<h3>二、分类情报</h3>",
     ]
 
+    parts.append("<h3>二点五、赛道热度趋势（近24h 对比 前6天）</h3><ul>")
+    for cat, items in grouped.items():
+        snap = trend_snapshot(items)
+        diff = snap["last_24h"] - snap["prev_6d"]
+        trend = "升温" if diff > 0 else ("降温" if diff < 0 else "持平")
+        parts.append(
+            f"<li>{html.escape(cat)}: 近24h={snap['last_24h']}，前6天={snap['prev_6d']}，趋势={trend}</li>"
+        )
+    parts.append("</ul>")
+
     cat_order = [
         "新产品与工具",
         "投资与创业动态",
@@ -218,7 +269,12 @@ def build_html_report(all_items: Dict[str, List[Item]], lookback_hours: int) -> 
             title = html.escape(i.title or "(无标题)")
             link = html.escape(i.link or "#")
             summary = html.escape((i.summary or "")[:180])
-            parts.append(f"<li><a href='{link}'>{title}</a> <em>[{src}]</em><br/>{summary}</li>")
+            score = investment_signal_score(i)
+            level = signal_level(score)
+            parts.append(
+                f"<li><a href='{link}'>{title}</a> <em>[{src}]</em> "
+                f"<strong>投资信号: {level}({score}/10)</strong><br/>{summary}</li>"
+            )
         parts.append("</ul>")
 
     parts.append("<h3>三、源站抓取状态</h3><ul>")
